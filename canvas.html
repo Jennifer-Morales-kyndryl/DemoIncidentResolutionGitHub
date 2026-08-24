@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Canvas: DemoIncidentResolution - Visualización</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, Roboto, "Segoe UI", Arial; margin:0; height:100vh; display:flex; flex-direction:column; }
+    header { padding:12px 16px; background:linear-gradient(90deg,#2b6cb0,#9f7aea); color:white; display:flex; align-items:center; gap:12px; }
+    header h1{ font-size:16px; margin:0; }
+    #controls { margin-left:auto; display:flex; gap:8px; align-items:center; }
+    button { background:white; border:none; padding:8px 12px; border-radius:6px; cursor:pointer; font-weight:600; }
+    button.active { background:#e2e8f0; }
+    #app { display:flex; flex:1; overflow:hidden; }
+    #network { flex:1; position:relative; }
+    #info { width:320px; border-left:1px solid #e6eef6; background:#fbfdff; padding:12px; box-sizing:border-box; overflow:auto; }
+    #legend { font-size:13px; margin-top:8px; }
+    .node-meta { font-size:13px; }
+    a.link { color:#2563eb; text-decoration:none; }
+    .small { font-size:12px; color:#555; }
+  </style>
+
+  <!-- vis-network v9 (standalone UMD) -->
+  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Canvas — DemoIncidentResolutionGitHub</h1>
+    <div class="small">Repositorio: Jennifer-Morales-kyndryl/DemoIncidentResolutionGitHub</div>
+    <div id="controls">
+      <button id="view-repo" class="active">Vista: Repo real</button>
+      <button id="view-arch">Vista: Arquitectura sugerida</button>
+      <button id="fit">Ajustar</button>
+      <button id="export">Exportar PNG</button>
+    </div>
+  </header>
+
+  <div id="app">
+    <div id="network"></div>
+    <aside id="info">
+      <h3>Detalles</h3>
+      <div id="details">Haz clic en un nodo para ver detalles.</div>
+
+      <div id="legend">
+        <h4>Leyenda</h4>
+        <div><span style="color:#2b6cb0;font-weight:700">●</span> Archivos reales (README, .gitignore, hola.txt)</div>
+        <div><span style="color:#16a34a;font-weight:700">●</span> Componentes sugeridos (UI, API, Agent, KB)</div>
+        <div style="margin-top:6px;"><strong>Enlaces:</strong> flechas indican llamadas o dependencias</div>
+      </div>
+
+      <div style="margin-top:12px;">
+        <h4>Notas</h4>
+        <p class="small">El repo actual contiene muy poco código (solo archivos de texto). La vista "Arquitectura sugerida" es una plantilla para ayudarte a mapear el diseño cuando agregues código (frontend, backend, agente LLM, base de conocimiento, datastore, notificaciones).</p>
+        <p class="small">Si quieres que mapee los archivos reales y dependencias, haz público el repo o sube un ZIP con el código.</p>
+      </div>
+    </aside>
+  </div>
+
+  <footer>
+    Hecho: escaneo del repo (README + listado) y generación de una arquitectura sugerida. Puedo crear un PR con este archivo si autorizas escritura en el repo.
+  </footer>
+
+<script>
+  // URLs reales en el repo (evidencia)
+  const urls = {
+    readme: "https://github.com/Jennifer-Morales-kyndryl/DemoIncidentResolutionGitHub/blob/main/README.md",
+    gitignore: "https://github.com/Jennifer-Morales-kyndryl/DemoIncidentResolutionGitHub/blob/main/.gitignore",
+    hola: "https://github.com/Jennifer-Morales-kyndryl/DemoIncidentResolutionGitHub/blob/main/hola.txt"
+  };
+
+  // Prepare nodes and edges for both views
+  const repoNodes = new vis.DataSet([
+    { id: 'README.md', label: 'README.md', group:'file', title:'README.md', shape:'box', color:'#2b6cb0' },
+    { id: '.gitignore', label: '.gitignore', group:'file', title:'.gitignore', shape:'box', color:'#2b6cb0' },
+    { id: 'hola.txt', label: 'hola.txt', group:'file', title:'hola.txt', shape:'box', color:'#2b6cb0' }
+  ]);
+  const repoEdges = new vis.DataSet([
+    { from: 'README.md', to: 'hola.txt', arrows: 'to', dashes:true, label:'mentions' },
+  ]);
+
+  // Suggested architecture nodes (template)
+  const archNodes = new vis.DataSet([
+    { id: 'UI', label:'UI\n(Front-end)', group:'comp', shape:'ellipse', color:'#16a34a' },
+    { id: 'API', label:'API\n(Backend)', group:'comp', shape:'ellipse', color:'#16a34a' },
+    { id: 'Agent', label:'Agent\n(LLM Orchestrator)', group:'comp', shape:'ellipse', color:'#f97316' },
+    { id: 'KB', label:'Knowledge Base\n(Docs/Vector DB)', group:'comp', shape:'database', color:'#7c3aed' },
+    { id: 'DB', label:'Datastore\n(Postgres / S3)', group:'comp', shape:'database', color:'#0ea5e9' },
+    { id: 'Notifier', label:'Notifier\n(Email/Slack)', group:'comp', shape:'box', color:'#f43f5e' },
+    { id: 'Monitoring', label:'Monitoring\n(Logs/Alerts)', group:'comp', shape:'box', color:'#94a3b8' }
+  ]);
+  const archEdges = new vis.DataSet([
+    { from:'UI', to:'API', arrows:'to', label:'HTTP' },
+    { from:'API', to:'Agent', arrows:'to', label:'orquesta' },
+    { from:'Agent', to:'KB', arrows:'to', label:'vector search' },
+    { from:'Agent', to:'DB', arrows:'to', label:'persist' },
+    { from:'Agent', to:'Notifier', arrows:'to', label:'notifica' },
+    { from:'API', to:'DB', arrows:'to', label:'reads/writes' },
+    { from:'API', to:'Monitoring', arrows:'to', label:'logs' }
+  ]);
+
+  // Combine for network; we'll control visibility
+  const allNodes = new vis.DataSet([...repoNodes.get(), ...archNodes.get()]);
+  const allEdges = new vis.DataSet([...repoEdges.get(), ...archEdges.get()]);
+
+  // Create a vis Network
+  const container = document.getElementById('network');
+  const data = { nodes: allNodes, edges: allEdges };
+  const options = {
+    interaction: { hover:true, navigationButtons:true, keyboard:true },
+    nodes: {
+      font: { multi:true },
+      margin: 10,
+      shapeProperties: { useImageSize: true }
+    },
+    physics: { stabilization:true, barnesHut: { gravitationalConstant:-20000, springConstant:0.001 } },
+    edges: { smooth: { type:'cubicBezier' }, font:{ align:'middle' } },
+    layout: { improvedLayout:true }
+  };
+  const network = new vis.Network(container, data, options);
+
+  // Initial view: show only repo nodes
+  function showRepoView() {
+    // show repo nodes, hide arch nodes
+    archNodes.forEach(n => allNodes.update({id:n.id, hidden:true}));
+    archEdges.forEach(e => allEdges.update({id:e.id || `${e.from}-${e.to}`, hidden:true}));
+    repoNodes.forEach(n => allNodes.update({id:n.id, hidden:false}));
+    repoEdges.forEach(e => allEdges.update({id:e.id || `${e.from}-${e.to}`, hidden:false}));
+    document.getElementById('view-repo').classList.add('active');
+    document.getElementById('view-arch').classList.remove('active');
+    document.getElementById('details').innerHTML = "<div class='node-meta'><strong>Vista: Repo real</strong><p class='small'>Archivos detectados en el repositorio.</p></div>";
+    network.fit({animation:true});
+  }
+
+  function showArchView() {
+    // show arch nodes, hide repo nodes
+    repoNodes.forEach(n => allNodes.update({id:n.id, hidden:true}));
+    repoEdges.forEach(e => allEdges.update({id:e.id || `${e.from}-${e.to}`, hidden:true}));
+    archNodes.forEach(n => allNodes.update({id:n.id, hidden:false}));
+    archEdges.forEach(e => allEdges.update({id:e.id || `${e.from}-${e.to}`, hidden:false}));
+    document.getElementById('view-arch').classList.add('active');
+    document.getElementById('view-repo').classList.remove('active');
+    document.getElementById('details').innerHTML = "<div class='node-meta'><strong>Vista: Arquitectura sugerida</strong><p class='small'>Plantilla para mapear componentes y flujos del proyecto (UI → API → Agent → KB/DB/Notifier).</p></div>";
+    network.fit({animation:true});
+  }
+
+  // Initial hide all then show repo
+  // First mark all arch nodes hidden by default
+  archNodes.forEach(n => allNodes.update({id:n.id, hidden:true}));
+  archEdges.forEach(e => allEdges.update({id:e.id || `${e.from}-${e.to}`, hidden:true}));
+
+  // Event handlers for buttons
+  document.getElementById('view-repo').onclick = showRepoView;
+  document.getElementById('view-arch').onclick = showArchView;
+  document.getElementById('fit').onclick = () => network.fit({animation:{duration:400}});
+  document.getElementById('export').onclick = () => {
+    const canvas = network.canvas.frame.canvas; // internal canvas
+    const url = canvas.toDataURL("image/png");
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "demoincident_canvas.png";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
+  // Click node shows details
+  network.on("click", function(params) {
+    if (params.nodes.length === 0) return;
+    const id = params.nodes[0];
+    let html = "";
+    // Repo nodes: link to file
+    if (id === "README.md") {
+      html = `<h3>README.md</h3><p class="small">Contenido breve: "From Incident to Agentic Resolution & Modernization".</p><p><a class="link" href="${urls.readme}" target="_blank">Abrir en GitHub</a></p>`;
+    } else if (id === ".gitignore") {
+      html = `<h3>.gitignore</h3><p class="small">Lista de archivos/dirs ignorados por git.</p><p><a class="link" href="${urls.gitignore}" target="_blank">Abrir en GitHub</a></p>`;
+    } else if (id === "hola.txt") {
+      html = `<h3>hola.txt</h3><p class="small">Archivo vacío (placeholder).</p><p><a class="link" href="${urls.hola}" target="_blank">Abrir en GitHub</a></p>`;
+    } else {
+      // Architecture nodes: provide suggested responsibilities and mapping tips
+      if (id === "UI") html = `<h3>UI (Front-end)</h3><p class="small">Interfaz para reportar/incidentes, revisar resultados del agente y ejecutar acciones de resolución.</p><p>Tech sugerida: React/Next.js o React Native (si es mobile).</p>`;
+      if (id === "API") html = `<h3>API (Backend)</h3><p class="small">Expone endpoints REST/GraphQL, valida datos y orquesta llamadas al agente y la base de datos.</p><p>Tech sugerida: FastAPI / Express / NestJS.</p>`;
+      if (id === "Agent") html = `<h3>Agent (Orquestador LLM)</h3><p class="small">Componente que maneja prompts, memoria, pipelines de recuperación (RAG), y decisiones automatizadas para resolver incidentes.</p><p>Ej: llama a OpenAI/Vertex/LLM local + usa vector DB.</p>`;
+      if (id === "KB") html = `<h3>Knowledge Base</h3><p class="small">Vector DB (Milvus/Weaviate/Pinecone) y/o repositorio de docs para recuperar contexto y evidencias.</p>`;
+      if (id === "DB") html = `<h3>Datastore</h3><p class="small">Persistencia de incidentes, historial, usuarios, configuraciones.</p>`;
+      if (id === "Notifier") html = `<h3>Notifier</h3><p class="small">Envío de alertas/actualizaciones por email, Slack u otros canales.</p>`;
+      if (id === "Monitoring") html = `<h3>Monitoring</h3><p class="small">Logs, métricas y alertas (Sentry, Prometheus, CloudWatch) para supervisar agentes y pipelines.</p>`;
+      html += `<hr/><div class="small">Consejo: cuando añadas código, mapea archivos concretos a estos nodos (ej. src/agent/* → Agent).</div>`;
+    }
+    document.getElementById('details').innerHTML = html;
+  });
+
+  // Fit on initial load and show repo view
+  network.once("stabilizationIterationsDone", function () {
+    network.fit();
+  });
+  showRepoView();
+
+  // Make container size responsive
+  function resizeNetwork() {
+    container.style.height = (window.innerHeight - document.querySelector('header').offsetHeight - document.querySelector('footer').offsetHeight) + 'px';
+    network.redraw();
+  }
+  window.addEventListener('resize', resizeNetwork);
+  resizeNetwork();
+</script>
+</body>
+</html>
